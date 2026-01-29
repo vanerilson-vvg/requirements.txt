@@ -5,7 +5,7 @@ import time
 import pandas_ta as ta
 import mplfinance as mpf
 
-st.set_page_config(page_title="Radar Monitor Elite", layout="wide")
+st.set_page_config(page_title="Radar Elite v2", layout="wide")
 
 def obter_dados(intervalo):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval={intervalo}&range=1d"
@@ -16,83 +16,59 @@ def obter_dados(intervalo):
         df = pd.DataFrame(r['indicators']['quote'][0])
         df['Date'] = pd.to_datetime(r['timestamp'], unit='s')
         return df.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close'}).set_index('Date').dropna()
-    except: return None
+    except:
+        return None
 
-def analisar(df):
-    if df is None or len(df) < 30: return None
+def analisar_tecnica(df):
+    if df is None or len(df) < 30:
+        return []
     c = df['Close']
-    ema9 = ta.ema(c, length=9)
-    ema21 = ta.ema(c, length=21)
     rsi = ta.rsi(c, length=14)
     macd = ta.macd(c)
-    stoch = ta.stoch(df['High'], df['Low'], c)
-    bbands = ta.bbands(c, length=20)
+    ema9 = ta.ema(c, length=9)
     
-    def sinal(cond_c, cond_v):
-        if cond_c: return "🟢 COMPRA"
-        if cond_v: return "🔴 VENDA"
-        return "⚪ NEUTRO"
+    def sinal(c_atual, ind_val):
+        if c_atual > ind_val: return "🟢 COMPRA"
+        return "🔴 VENDA"
 
-    dados = [
-        ("Média (EMA 9)", sinal(c.iloc[-1] > ema9.iloc[-1], c.iloc[-1] < ema9.iloc[-1])),
-        ("Média (EMA 21)", sinal(c.iloc[-1] > ema21.iloc[-1], c.iloc[-1] < ema21.iloc[-1])),
-        ("RSI (14)", sinal(rsi.iloc[-1] < 30, rsi.iloc[-1] > 70)),
-        ("MACD", sinal(macd.iloc[-1, 0] > macd.iloc[-1, 2], macd.iloc[-1, 0] < macd.iloc[-1, 2])),
-        ("Estocástico", sinal(stoch.iloc[-1, 0] < 20, stoch.iloc[-1, 0] > 80)),
-        ("Bollinger", sinal(c.iloc[-1] < bbands.iloc[-1, 0], c.iloc[-1] > bbands.iloc[-1, 2]))
+    return [
+        ("Média (EMA 9)", sinal(c.iloc[-1], ema9.iloc[-1])),
+        ("RSI (14)", "🟢 SOBREVENDA" if rsi.iloc[-1] < 30 else "🔴 SOBRECOMPRA" if rsi.iloc[-1] > 70 else "⚪ NEUTRO"),
+        ("Tendência MACD", "🟢 ALTA" if macd.iloc[-1, 0] > macd.iloc[-1, 2] else "🔴 BAIXA")
     ]
-    return dados
 
-# --- Estrutura da Tela ---
-st.title("🛡️ MONITOR DE CONFLUÊNCIA EUR/USD")
-topo = st.empty()
-tabela = st.empty()
+st.title("🛡️ MONITOR ESTRATÉGICO EUR/USD")
+# Espaços reservados para garantir a ordem
+area_preco = st.empty()
+area_tabela = st.empty()
 st.markdown("---")
-grafico = st.empty()
+area_grafico = st.empty()
 
 while True:
     df1 = obter_dados("1m")
     df5 = obter_dados("5m")
     
     if df1 is not None and df5 is not None:
-        # Preço no topo
-        topo.metric("EUR/USD LIVE", f"{df1['Close'].iloc[-1]:.5f}")
+        area_preco.metric("PREÇO ATUAL", f"{df1['Close'].iloc[-1]:.5f}")
         
-        # Tabela de Dados (Topo)
-        with tabela.container():
-            s1, s5 = analisar(df1), analisar(df5)
+        with area_tabela.container():
+            st.subheader("🔍 Dados Estratégicos (M1 vs M5)")
+            s1, s5 = analisar_tecnica(df1), analisar_tecnica(df5)
             if s1 and s5:
-                df_mostra = pd.DataFrame({
+                df_tab = pd.DataFrame({
                     "INDICADOR": [x[0] for x in s1],
                     "SINAL M1": [x[1] for x in s1],
                     "SINAL M5": [x[1] for x in s5]
                 })
-                st.table(df_mostra)
-                
-                # Força de Confluência
-                c = sum(1 for x in s1+s5 if "COMPRA" in x[1])
-                v = sum(1 for x in s1+s5 if "VENDA" in x[1])
-                st.write(f"**CONFLUÊNCIA:** 🟢 {c*100/12:.0f}% COMPRA | 🔴 {v*100/12:.0f}% VENDA")
+                st.table(df_tab)
 
-        # Gráfico (Baixo)
-        with grafico.container():
-            st.subheader("Tendência Visual (M5)")
+        with area_grafico.container():
+            st.subheader("📊 Tendência Visual M5 (Baixo)")
             fig, _ = mpf.plot(df5.tail(35), type='candle', style='charles', returnfig=True, tight_layout=True)
             st.pyplot(fig)
 
     time.sleep(2)
     st.rerun()
-
-    return [
-        ("Média (EMA 9)", sinal(c.iloc[-1] > ema9.iloc[-1], c.iloc[-1] < ema9.iloc[-1])),
-        ("Média (EMA 21)", sinal(c.iloc[-1] > ema21.iloc[-1], c.iloc[-1] < ema21.iloc[-1])),
-        ("RSI (14)", sinal(rsi.iloc[-1] < 30, rsi.iloc[-1] > 70)),
-        ("MACD", sinal(macd.iloc[-1, 0] > macd.iloc[-1, 2], macd.iloc[-1, 0] < macd.iloc[-1, 2])),
-        ("Estocástico", sinal(stoch.iloc[-1, 0] < 20, stoch.iloc[-1, 0] > 80)),
-        ("Bollinger", sinal(c.iloc[-1] < bbands.iloc[-1, 0], c.iloc[-1] > bbands.iloc[-1, 2]))
-    ]
-
-# --- INTERFACE NA ORDEM SOLICITADA ---
 st.title("📈 MONITOR ESTRATÉGICO EUR/USD")
 
 # 1. PREÇO E DADOS (EM CIMA)
