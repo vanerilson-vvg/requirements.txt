@@ -5,225 +5,65 @@ import time
 import pandas_ta as ta
 from datetime import datetime
 
-# Configuração da página para focar apenas nos dados
-st.set_page_config(page_title="Monitor 10 Indicadores", layout="wide")
+st.set_page_config(page_title="Monitor Elite", layout="wide")
 
-def obter_dados(intervalo):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval={intervalo}&range=1d"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def pegar_dados(tempo):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval={tempo}&range=1d"
     try:
-        res = requests.get(url, headers=headers, timeout=5)
-        r = res.json()['chart']['result'][0]
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5).json()['chart']['result'][0]
         df = pd.DataFrame(r['indicators']['quote'][0])
         df['Date'] = pd.to_datetime(r['timestamp'], unit='s')
         return df.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close'}).set_index('Date').dropna()
-    except:
-        return None
+    except: return None
 
-def analisar(df):
-    if df is None or len(df) < 40:
-        return None
+def calcular_sinal(df):
+    if df is None or len(df) < 40: return None
     c, h, l = df['Close'], df['High'], df['Low']
-    
-    # 10 Indicadores Estratégicos (Calculados via pandas_ta)
-    ema9 = ta.ema(c, length=9)
-    ema21 = ta.ema(c, length=21)
-    rsi = ta.rsi(c, length=14)
-    macd = ta.macd(c)
-    stoch = ta.stoch(h, l, c)
-    bb = ta.bbands(c, length=20)
-    cci = ta.cci(h, l, c, length=20)
-    adx = ta.adx(h, l, c)
-    atr = ta.atr(h, l, c, length=14)
-    ichimoku = c.rolling(26).mean()
-
-    def sinalizar(compra, venda):
+    # Cálculos Técnicos
+    rsi = ta.rsi(c, 14).iloc[-1]
+    macd = ta.macd(c).iloc[-1]
+    stoch = ta.stoch(h, l, c).iloc[-1]
+    ema9, ema21 = ta.ema(c, 9).iloc[-1], ta.ema(c, 21).iloc[-1]
+    bb = ta.bbands(c, 20).iloc[-1]
+    # Lógica de Sinais
+    def s(compra, venda):
         if compra: return "🟢 COMPRA"
         if venda: return "🔴 VENDA"
         return "⚪ NEUTRO"
-
+    # Lista de 10 Indicadores
     return [
-        ("Média (EMA 9)", sinalizar(c.iloc[-1] > ema9.iloc[-1], c.iloc[-1] < ema9.iloc[-1])),
-        ("Média (EMA 21)", sinalizar(c.iloc[-1] > ema21.iloc[-1], c.iloc[-1] < ema21.iloc[-1])),
-        ("Ichimoku", sinalizar(c.iloc[-1] > ichimoku.iloc[-1], c.iloc[-1] < ichimoku.iloc[-1])),
-        ("RSI (14)", sinalizar(rsi.iloc[-1] < 30, rsi.iloc[-1] > 70)),
-        ("MACD (Trend)", sinalizar(macd.iloc[-1, 0] > macd.iloc[-1, 2], macd.iloc[-1, 0] < macd.iloc[-1, 2])),
-        ("Estocástico", sinalizar(stoch.iloc[-1, 0] < 20, stoch.iloc[-1, 0] > 80)),
-        ("Bollinger", sinalizar(c.iloc[-1] < bb.iloc[-1, 0], c.iloc[-1] > bb.iloc[-1, 2])),
-        ("ATR (Volat.)", "🔴 VENDA" if atr.iloc[-1] > atr.mean() else "🟢 COMPRA"),
-        ("CCI (Canal)", sinalizar(cci.iloc[-1] < -100, cci.iloc[-1] > 100)),
-        ("Volume (OBV)", sinalizar(c.iloc[-1] > c.iloc[-2], c.iloc[-1] < c.iloc[-2]))
+        ("Média (EMA 9)", s(c.iloc[-1] > ema9, c.iloc[-1] < ema9)),
+        ("Média (EMA 21)", s(c.iloc[-1] > ema21, c.iloc[-1] < ema21)),
+        ("RSI (14)", s(rsi < 30, rsi > 70)),
+        ("MACD", s(macd.iloc[0] > macd.iloc[2], macd.iloc[0] < macd.iloc[2])),
+        ("Estocástico", s(stoch.iloc[0] < 20, stoch.iloc[0] > 80)),
+        ("Bollinger", s(c.iloc[-1] < bb.iloc[0], c.iloc[-1] > bb.iloc[2])),
+        ("Ichimoku", s(c.iloc[-1] > c.rolling(26).mean().iloc[-1], c.iloc[-1] < c.rolling(26).mean().iloc[-1])),
+        ("Tendência", s(c.iloc[-1] > c.iloc[-10], c.iloc[-1] < c.iloc[-10])),
+        ("Volume OBV", "🟢 ALTA" if c.iloc[-1] > c.iloc[-2] else "🔴 BAIXA"),
+        ("Força ADX", "🟢 FORTE" if ta.adx(h, l, c).iloc[-1, 0] > 25 else "⚪ NEUTRO")
     ]
 
-# --- Interface Principal (Sem Gráficos) ---
-st.title("🛡️ MONITOR DE CONFLUÊNCIA EUR/USD")
-container_principal = st.empty()
+# Interface
+st.title("📊 MONITOR 10 INDICADORES")
+placeholder = st.empty()
 
 while True:
-    d1, d5 = obter_dados("1m"), obter_dados("5m")
+    d1, d5 = pegar_dados("1m"), pegar_dados("5m")
     if d1 is not None and d5 is not None:
-        s1, s5 = analisar(d1), analisar(d5)
+        s1, s5 = calcular_sinal(d1), calcular_sinal(d5)
         if s1 and s5:
-            with container_principal.container():
-                st.code(f"ATUALIZADO EM: {datetime.now().strftime('%H:%M:%S')} | PREÇO: {d1['Close'].iloc[-1]:.5f}")
-                
-                # Tabela de Indicadores (M1 vs M5)
-                df_monitor = pd.DataFrame({
-                    "INDICADOR": [x[0] for x in s1],
-                    "SINAL M1": [x[1] for x in s1],
-                    "SINAL M5": [x[1] for x in s5]
-                })
-                st.table(df_monitor)
-                
-                # Lógica do Super Sinal de Confluência
-                v_compra = sum(1 for x in s1+s5 if "COMPRA" in x[1])
-                v_venda = sum(1 for x in s1+s5 if "VENDA" in x[1])
-                confluencia = (max(v_compra, v_venda) / 20) * 100
-                
-                st.markdown("### 🎯 CONFLUÊNCIA (HARMONIA DE GRUPOS)")
-                if confluencia >= 75:
-                    if v_compra > v_venda: 
-                        st.success(f"🔥 SUPER SINAL DE COMPRA: {confluencia:.0f}%")
-                    else: 
-                        st.error(f"🔥 SUPER SINAL DE VENDA: {confluencia:.0f}%")
-                else:
-                    st.warning(f"⚖️ AGUARDANDO HARMONIA ({confluencia:.0f}%)")
-                    
-    time.sleep(2)
-    st.rerun()
-    atr = ta.atr(h, l, c, length=14)
-    ichimoku = c.rolling(26).mean()
-
-    def sinal(compra, venda):
-        if compra: return "🟢 COMPRA"
-        if venda: return "🔴 VENDA"
-        return "⚪ NEUTRO"
-
-    # Lista final para a tabela
-    indicadores = [
-        ("Média (EMA 9)", sinal(c.iloc[-1] > ema9.iloc[-1], c.iloc[-1] < ema9.iloc[-1])),
-        ("Média (EMA 21)", sinal(c.iloc[-1] > ema21.iloc[-1], c.iloc[-1] < ema21.iloc[-1])),
-        ("Ichimoku", sinal(c.iloc[-1] > ichimoku.iloc[-1], c.iloc[-1] < ichimoku.iloc[-1])),
-        ("RSI (14)", sinal(rsi.iloc[-1] < 30, rsi.iloc[-1] > 70)),
-        ("MACD", sinal(macd.iloc[-1, 0] > macd.iloc[-1, 2], macd.iloc[-1, 0] < macd.iloc[-1, 2])),
-        ("Estocástico", sinal(stoch.iloc[-1, 0] < 20, stoch.iloc[-1, 0] > 80)),
-        ("Bollinger", sinal(c.iloc[-1] < bb.iloc[-1, 0], c.iloc[-1] > bb.iloc[-1, 2])),
-        ("ATR (Volat.)", "🔴 VENDA" if atr.iloc[-1] > atr.mean() else "🟢 COMPRA"),
-        ("CCI (Canal)", sinal(cci.iloc[-1] < -100, cci.iloc[-1] > 100)),
-        ("Volume (OBV)", sinal(c.iloc[-1] > c.iloc[-2], c.iloc[-1] < c.iloc[-2]))
-    ]
-    return indicadores
-
-# --- Interface ---
-st.title("🚀 MONITOR 10 INDICADORES | EUR/USD")
-espaco_terminal = st.empty()
-
-while True:
-    d1, d5 = obter_dados("1m"), obter_dados("5m")
-    if d1 is not None and d5 is not None:
-        s1, s5 = analisar(d1), analisar(d5)
-        if s1 and s5:
-            with espaco_terminal.container():
-                st.code(f"ATUALIZADO EM: {datetime.now().strftime('%H:%M:%S')} | PREÇO: {d1['Close'].iloc[-1]:.5f}")
-                
-                # Criar Tabela Comparativa M1 vs M5
-                df_final = pd.DataFrame({
-                    "INDICADOR": [x[0] for x in s1],
-                    "SINAL M1": [x[1] for x in s1],
-                    "SINAL M5": [x[1] for x in s5]
-                })
-                st.table(df_final)
-                
-                # Lógica de Confluência (Super Sinal)
-                v_c = sum(1 for x in s1+s5 if "COMPRA" in x[1])
-                v_v = sum(1 for x in s1+s5 if "VENDA" in x[1])
-                forca = (max(v_c, v_v) / 20) * 100
-                
-                st.subheader("🎯 CONFLUÊNCIA (HARMONIA DE GRUPOS)")
-                if forca >= 75:
-                    if v_c > v_v: st.success(f"🔥 SUPER SINAL DE COMPRA: {forca:.0f}%")
-                    else: st.error(f"🔥 SUPER SINAL DE VENDA: {forca:.0f}%")
-                else:
-                    st.warning(f"⚖️ AGUARDANDO CONFLUÊNCIA ({forca:.0f}%)")
-                    
-    time.sleep(2)
-    st.rerun()
-    df_final = pd.DataFrame({
-                    "INDICADOR": [x[0] for x in s1],
-                    "SINAL M1": [x[1] for x in s1],
-                    "SINAL M5": [x[1] for x in s5]
-                })
-                st.table(df_final)
-
-            with sinal_box:
-                votos_c = sum(1 for x in s1+s5 if "COMPRA" in x[1] or "ALTA" in x[1] or "FORTE" in x[1])
-                votos_v = sum(1 for x in s1+s5 if "VENDA" in x[1] or "BAIXA" in x[1])
-                forca = (max(votos_c, votos_v) / 20) * 100
-                
-                st.markdown("### 🎯 CONFLUÊNCIA (HARMONIA DE GRUPOS)")
-                if votos_c > votos_v and forca >= 70:
-                    st.success(f"🔥 SUPER SINAL DE COMPRA: {forca:.0f}%")
-                elif votos_v > votos_c and forca >= 70:
-                    st.error(f"🔥 SUPER SINAL DE VENDA: {forca:.0f}%")
-                else:
-                    st.warning(f"⚖️ AGUARDANDO CONFLUÊNCIA ({forca:.0f}%)")
-    time.sleep(2)
-    st.rerun()
-    def s(cond_c, cond_v):
-        if cond_c: return "🟢 COMPRA"
-        if cond_v: return "🔴 VENDA"
-        return "⚪ NEUTRO"
-
-    indicadores = [
-        ("Média (EMA 9)", s(c.iloc[-1] > ema9.iloc[-1], c.iloc[-1] < ema9.iloc[-1])),
-        ("Média (EMA 21)", s(c.iloc[-1] > ema21.iloc[-1], c.iloc[-1] < ema21.iloc[-1])),
-        ("RSI (14)", s(rsi.iloc[-1] < 30, rsi.iloc[-1] > 70)),
-        ("MACD", s(macd.iloc[-1, 0] > macd.iloc[-1, 2], macd.iloc[-1, 0] < macd.iloc[-1, 2])),
-        ("Estocástico", s(stoch.iloc[-1, 0] < 20, stoch.iloc[-1, 0] > 80)),
-        ("Bollinger", s(c.iloc[-1] < bbands.iloc[-1, 0], c.iloc[-1] > bbands.iloc[-1, 2])),
-        ("CCI (Canal)", s(cci.iloc[-1] < -100, cci.iloc[-1] > 100)),
-        ("ADX (Força)", "🟢 FORTE" if adx.iloc[-1, 0] > 25 else "⚪ FRACA"),
-        ("Ichimoku (Base)", s(c.iloc[-1] > c.rolling(26).mean().iloc[-1], c.iloc[-1] < c.rolling(26).mean().iloc[-1])),
-        ("Volume (OBV)", "🟢 ALTA" if c.iloc[-1] > c.iloc[-2] else "🔴 BAIXA")
-    ]
-    return indicadores
-
-# --- Interface ---
-st.title("🚀 MONITOR 10 INDICADORES | EUR/USD")
-monitor_spot = st.empty()
-sinal_spot = st.empty()
-
-while True:
-    df1 = obter_dados("1m")
-    df5 = obter_dados("5m")
-    
-    if df1 is not None and df5 is not None:
-        s1 = analisar_completo(df1)
-        s5 = analisar_completo(df5)
-        
-        if s1 and s5:
-            with monitor_spot.container():
-                st.metric("PREÇO ATUAL", f"{df1['Close'].iloc[-1]:.5f}")
-                df_final = pd.DataFrame({
-                    "INDICADOR": [x[0] for x in s1],
-                    "SINAL M1": [x[1] for x in s1],
-                    "SINAL M5": [x[1] for x in s5]
-                })
-                st.table(df_final)
-
-            with sinal_spot.container():
-                # Lógica do Super Sinal (Harmonia de Grupos)
-                votos_c = sum(1 for x in s1+s5 if "COMPRA" in x[1] or "ALTA" in x[1])
-                votos_v = sum(1 for x in s1+s5 if "VENDA" in x[1] or "BAIXA" in x[1])
-                forca = (max(votos_c, votos_v) / 20) * 100
-                
-                st.markdown("### 🎯 CONFLUÊNCIA ESTRATÉGICA")
-                if votos_c > votos_v and forca >= 70:
-                    st.success(f"🔥 SUPER SINAL DE COMPRA: {forca:.0f}% DE FORÇA")
-                elif votos_v > votos_c and forca >= 70:
-                    st.error(f"🔥 SUPER SINAL DE VENDA: {forca:.0f}% DE FORÇA")
-                else:
-                    st.warning(f"⚖️ AGUARDANDO CONFLUÊNCIA ({forca:.0f}%)")
-
+            with placeholder.container():
+                st.metric("PREÇO EUR/USD", f"{d1['Close'].iloc[-1]:.5f}")
+                # Tabela Comparativa
+                df_term = pd.DataFrame({"INDICADOR": [x[0] for x in s1], "SINAL M1": [x[1] for x in s1], "SINAL M5": [x[1] for x in s5]})
+                st.table(df_term)
+                # Super Sinal
+                v_c = sum(1 for x in s1+s5 if "COMPRA" in x[1] or "ALTA" in x[1])
+                v_v = sum(1 for x in s1+s5 if "VENDA" in x[1] or "BAIXA" in x[1])
+                f = (max(v_c, v_v) / 20) * 100
+                if f >= 75:
+                    st.success(f"🔥 SUPER SINAL: {'COMPRA' if v_c > v_v else 'VENDA'} ({f:.0f}%)")
+                else: st.warning(f"⚖️ AGUARDANDO CONFLUÊNCIA ({f:.0f}%)")
     time.sleep(2)
     st.rerun()
