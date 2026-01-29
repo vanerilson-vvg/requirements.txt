@@ -5,7 +5,7 @@ import time
 import pandas_ta as ta
 from datetime import datetime
 
-# Configuração da página para modo escuro/wide
+# Configuração da página para focar apenas nos dados
 st.set_page_config(page_title="Monitor 10 Indicadores", layout="wide")
 
 def obter_dados(intervalo):
@@ -25,7 +25,7 @@ def analisar(df):
         return None
     c, h, l = df['Close'], df['High'], df['Low']
     
-    # 10 Indicadores Estratégicos
+    # 10 Indicadores Estratégicos (Calculados via pandas_ta)
     ema9 = ta.ema(c, length=9)
     ema21 = ta.ema(c, length=21)
     rsi = ta.rsi(c, length=14)
@@ -34,6 +34,63 @@ def analisar(df):
     bb = ta.bbands(c, length=20)
     cci = ta.cci(h, l, c, length=20)
     adx = ta.adx(h, l, c)
+    atr = ta.atr(h, l, c, length=14)
+    ichimoku = c.rolling(26).mean()
+
+    def sinalizar(compra, venda):
+        if compra: return "🟢 COMPRA"
+        if venda: return "🔴 VENDA"
+        return "⚪ NEUTRO"
+
+    return [
+        ("Média (EMA 9)", sinalizar(c.iloc[-1] > ema9.iloc[-1], c.iloc[-1] < ema9.iloc[-1])),
+        ("Média (EMA 21)", sinalizar(c.iloc[-1] > ema21.iloc[-1], c.iloc[-1] < ema21.iloc[-1])),
+        ("Ichimoku", sinalizar(c.iloc[-1] > ichimoku.iloc[-1], c.iloc[-1] < ichimoku.iloc[-1])),
+        ("RSI (14)", sinalizar(rsi.iloc[-1] < 30, rsi.iloc[-1] > 70)),
+        ("MACD (Trend)", sinalizar(macd.iloc[-1, 0] > macd.iloc[-1, 2], macd.iloc[-1, 0] < macd.iloc[-1, 2])),
+        ("Estocástico", sinalizar(stoch.iloc[-1, 0] < 20, stoch.iloc[-1, 0] > 80)),
+        ("Bollinger", sinalizar(c.iloc[-1] < bb.iloc[-1, 0], c.iloc[-1] > bb.iloc[-1, 2])),
+        ("ATR (Volat.)", "🔴 VENDA" if atr.iloc[-1] > atr.mean() else "🟢 COMPRA"),
+        ("CCI (Canal)", sinalizar(cci.iloc[-1] < -100, cci.iloc[-1] > 100)),
+        ("Volume (OBV)", sinalizar(c.iloc[-1] > c.iloc[-2], c.iloc[-1] < c.iloc[-2]))
+    ]
+
+# --- Interface Principal (Sem Gráficos) ---
+st.title("🛡️ MONITOR DE CONFLUÊNCIA EUR/USD")
+container_principal = st.empty()
+
+while True:
+    d1, d5 = obter_dados("1m"), obter_dados("5m")
+    if d1 is not None and d5 is not None:
+        s1, s5 = analisar(d1), analisar(d5)
+        if s1 and s5:
+            with container_principal.container():
+                st.code(f"ATUALIZADO EM: {datetime.now().strftime('%H:%M:%S')} | PREÇO: {d1['Close'].iloc[-1]:.5f}")
+                
+                # Tabela de Indicadores (M1 vs M5)
+                df_monitor = pd.DataFrame({
+                    "INDICADOR": [x[0] for x in s1],
+                    "SINAL M1": [x[1] for x in s1],
+                    "SINAL M5": [x[1] for x in s5]
+                })
+                st.table(df_monitor)
+                
+                # Lógica do Super Sinal de Confluência
+                v_compra = sum(1 for x in s1+s5 if "COMPRA" in x[1])
+                v_venda = sum(1 for x in s1+s5 if "VENDA" in x[1])
+                confluencia = (max(v_compra, v_venda) / 20) * 100
+                
+                st.markdown("### 🎯 CONFLUÊNCIA (HARMONIA DE GRUPOS)")
+                if confluencia >= 75:
+                    if v_compra > v_venda: 
+                        st.success(f"🔥 SUPER SINAL DE COMPRA: {confluencia:.0f}%")
+                    else: 
+                        st.error(f"🔥 SUPER SINAL DE VENDA: {confluencia:.0f}%")
+                else:
+                    st.warning(f"⚖️ AGUARDANDO HARMONIA ({confluencia:.0f}%)")
+                    
+    time.sleep(2)
+    st.rerun()
     atr = ta.atr(h, l, c, length=14)
     ichimoku = c.rolling(26).mean()
 
